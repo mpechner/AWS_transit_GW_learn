@@ -1,0 +1,25 @@
+# =============================================================================
+# terraform.tfvars.example — Network Environment
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is excluded from git (.gitignore).
+# Commit only this .example file.
+#
+# cp terraform.tfvars.example terraform.tfvars
+# =============================================================================
+
+# AWS region for all resources
+aws_region = "us-west-2"
+
+# 12-digit account ID for your network/shared-services account
+network_account_id = "111111111111"
+
+# Project name for tagging and resource naming
+project = "aws-transit-gw-learn"
+
+# CIDR hierarchy — defaults match architecture.md
+# Only change if these ranges conflict with your existing address space.
+root_cidr     = "10.0.0.0/8"
+regional_cidr = "10.0.0.0/16"
+dev_cidr      = "10.0.1.0/24"
+prod_cidr     = "10.0.2.0/24"

@@ -205,3 +205,15 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Terraform
+# Exclude tfvars (contain account IDs and secrets) but keep examples.
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+# Exclude the downloaded provider binaries but NOT the lock file.
+# .terraform.lock.hcl records provider checksums and must be committed
+# to prevent silent substitution of provider versions (supply chain control).
+.terraform/
+*.tfplan
+*.tfplan
