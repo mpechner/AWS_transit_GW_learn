@@ -148,3 +148,25 @@ Working through this repo teaches:
 - How RAM shares resources within an AWS Organization without account-level IAM grants
 - Why route table propagation works and when you would segment it (Phase 2)
 - The deployment ordering discipline required when Terraform state is split by account
+
+---
+
+## Further Reading
+
+AWS documentation for the services used in this repo:
+
+| Topic | Link |
+|-------|------|
+| What is IPAM | https://docs.aws.amazon.com/vpc/latest/ipam/what-it-is-ipam.html |
+| IPAM pool hierarchy | https://docs.aws.amazon.com/vpc/latest/ipam/how-it-works-ipam.html |
+| Share IPAM pools via RAM | https://docs.aws.amazon.com/vpc/latest/ipam/share-pool-ipam.html |
+| Enable IPAM delegated admin | https://docs.aws.amazon.com/vpc/latest/ipam/enable-integ-ipam.html |
+| How Transit Gateway works | https://docs.aws.amazon.com/vpc/latest/tgw/how-transit-gateways-work.html |
+| TGW VPC attachments | https://docs.aws.amazon.com/vpc/latest/tgw/tgw-vpc-attachments.html |
+| TGW route table propagation | https://docs.aws.amazon.com/vpc/latest/tgw/tgw-route-tables.html |
+| What is AWS RAM | https://docs.aws.amazon.com/ram/latest/userguide/what-is.html |
+| Enable RAM org sharing | https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs |
+| Terraform assume_role provider | https://registry.terraform.io/providers/hashicorp/aws/latest/docs#assuming-an-iam-role |
+| Terraform remote_state data source | https://developer.hashicorp.com/terraform/language/state/remote-state-data |
+
+Start with "How Transit Gateway works" and "What is IPAM" -- those two cover most of what this repo does.
