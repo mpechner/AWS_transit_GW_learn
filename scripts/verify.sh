@@ -179,7 +179,7 @@ info "TGW Attachment Details:"
 aws ec2 describe-transit-gateway-attachments \
   --filters "Name=transit-gateway-id,Values=${TGW_ID}" \
   --region "${REGION}" \
-  --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,Account:CreatedBy,ResourceId:ResourceId}' \
+  --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,OwnerAccount:ResourceOwnerId,ResourceId:ResourceId}' \
   --output table
 echo ""
 
@@ -216,7 +216,7 @@ if [ -n "${TGW_RT_ID}" ] && [ "${TGW_RT_ID}" != "None" ]; then
     --transit-gateway-route-table-id "${TGW_RT_ID}" \
     --filters "Name=state,Values=active" \
     --region "${REGION}" \
-    --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,State:State}' \
+    --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,VPC:TransitGatewayAttachments[0].ResourceId,State:State}' \
     --output table
   echo ""
 else
@@ -395,11 +395,11 @@ for POOL_ID in ${IPAM_POOL_IDS}; do
     --query 'length(IpamPoolAllocations)' \
     --output text 2>/dev/null || echo "0")
   if [ "${ALLOC_COUNT}" -gt 0 ] 2>/dev/null; then
-    show_cmd "aws ec2 get-ipam-pool-allocations --ipam-pool-id ${POOL_ID} --region ${REGION} --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId}' --output table"
+    show_cmd "aws ec2 get-ipam-pool-allocations --ipam-pool-id ${POOL_ID} --region ${REGION} --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId,Owner:ResourceOwner}' --output table"
     aws ec2 get-ipam-pool-allocations \
       --ipam-pool-id "${POOL_ID}" \
       --region "${REGION}" \
-      --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId}' \
+      --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId,Owner:ResourceOwner}' \
       --output table
   fi
 done
@@ -467,21 +467,21 @@ aws ec2 describe-transit-gateways \
   --output table
 
 echo ""
-show_cmd "aws ec2 describe-transit-gateway-attachments --filters 'Name=transit-gateway-id,Values=${TGW_ID}' --region ${REGION} --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,Account:CreatedBy,ResourceId:ResourceId}' --output table"
+show_cmd "aws ec2 describe-transit-gateway-attachments --filters 'Name=transit-gateway-id,Values=${TGW_ID}' --region ${REGION} --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,OwnerAccount:ResourceOwnerId,ResourceId:ResourceId}' --output table"
 aws ec2 describe-transit-gateway-attachments \
   --filters "Name=transit-gateway-id,Values=${TGW_ID}" \
   --region "${REGION}" \
-  --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,Account:CreatedBy,ResourceId:ResourceId}' \
+  --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,OwnerAccount:ResourceOwnerId,ResourceId:ResourceId}' \
   --output table
 
 if [ -n "${TGW_RT_ID:-}" ] && [ "${TGW_RT_ID}" != "None" ]; then
   echo ""
-  show_cmd "aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id ${TGW_RT_ID} --filters 'Name=state,Values=active' --region ${REGION} --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,State:State}' --output table"
+  show_cmd "aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id ${TGW_RT_ID} --filters 'Name=state,Values=active' --region ${REGION} --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,VPC:TransitGatewayAttachments[0].ResourceId,State:State}' --output table"
   aws ec2 search-transit-gateway-routes \
     --transit-gateway-route-table-id "${TGW_RT_ID}" \
     --filters "Name=state,Values=active" \
     --region "${REGION}" \
-    --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,State:State}' \
+    --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,VPC:TransitGatewayAttachments[0].ResourceId,State:State}' \
     --output table
 fi
 
@@ -496,11 +496,11 @@ assume_role "${NETWORK_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-network"
 
 if [ "${NET_VPC_ID}" != "NOT_FOUND" ] && [ "${NET_VPC_ID}" != "None" ]; then
   echo ""
-  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${NET_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${NET_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' --output table"
   aws ec2 describe-subnets \
     --filters "Name=vpc-id,Values=${NET_VPC_ID}" \
     --region "${REGION}" \
-    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' \
     --output table
 
   echo ""
@@ -523,11 +523,11 @@ assume_role "${DEV_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-dev"
 
 if [ "${DEV_VPC_ID}" != "NOT_FOUND" ] && [ "${DEV_VPC_ID}" != "None" ]; then
   echo ""
-  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${DEV_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${DEV_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' --output table"
   aws ec2 describe-subnets \
     --filters "Name=vpc-id,Values=${DEV_VPC_ID}" \
     --region "${REGION}" \
-    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' \
     --output table
 
   echo ""
@@ -550,11 +550,11 @@ assume_role "${PROD_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-prod"
 
 if [ "${PROD_VPC_ID}" != "NOT_FOUND" ] && [ "${PROD_VPC_ID}" != "None" ]; then
   echo ""
-  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${PROD_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${PROD_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' --output table"
   aws ec2 describe-subnets \
     --filters "Name=vpc-id,Values=${PROD_VPC_ID}" \
     --region "${REGION}" \
-    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,Public:MapPublicIpOnLaunch,State:State}' \
     --output table
 
   echo ""
