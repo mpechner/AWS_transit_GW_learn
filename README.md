@@ -112,16 +112,21 @@ See [runbook.md](runbook.md#validation) for the complete validation checklist.
 
 ## Cleanup
 
-Destroy in reverse order to avoid dependency errors:
+Destroy in reverse order to avoid dependency errors. Dev and prod can run
+in parallel (separate state locks); just wait for both before destroying network:
 
 ```bash
-cd terraform/environments/prod    && terraform destroy
-cd terraform/environments/dev     && terraform destroy
-cd terraform/layers/network       && terraform destroy
+# Terminal 1                              # Terminal 2
+cd terraform/environments/dev             cd terraform/environments/prod
+terraform destroy                         terraform destroy
+
+# After both complete:
+cd terraform/layers/network && terraform destroy
 ```
 
-> **Warning**: IPAM and TGW destroy cleanly only after all attachments and
-> VPC IPAM allocations have been released. Destroy workload environments first.
+> **Warning**: IPAM-allocated VPCs take 10-20 minutes to delete while AWS
+> deallocates the CIDR back to the pool. This is normal -- don't cancel.
+> See [runbook.md](runbook.md#teardown) for details.
 
 ---
 

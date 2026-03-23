@@ -545,24 +545,35 @@ Destroy in reverse dependency order. If you destroy network first, the
 IPAM and TGW will fail to destroy because VPC allocations and attachments
 still exist.
 
-### Step 1: Destroy Prod
+Dev and prod have separate state files and separate locks, so you can
+destroy them in parallel from two terminals. Just wait for both to finish
+before destroying the network layer.
 
-```bash
-cd terraform/environments/prod
-terraform destroy
-```
+> **Important**: Do not interrupt (Ctrl-C or close the terminal) a running
+> `terraform destroy`. If a destroy is killed mid-run, Terraform state will
+> be out of sync with AWS and you will need to manually remove stuck resources
+> with `terraform state rm`. Let every destroy run to completion.
 
-Type `yes` to confirm. This releases the prod IPAM allocation and deletes
-the TGW attachment. The TGW attachment deletion takes ~2 minutes.
+### Step 1: Destroy Dev and Prod (can run in parallel)
 
-### Step 2: Destroy Dev
+Terminal 1:
 
 ```bash
 cd terraform/environments/dev
 terraform destroy
 ```
 
-### Step 3: Destroy Network
+Terminal 2 (at the same time):
+
+```bash
+cd terraform/environments/prod
+terraform destroy
+```
+
+Type `yes` in each terminal to confirm. IPAM-allocated VPCs take 10-20
+minutes to delete (see warning below). Wait for both to complete.
+
+### Step 2: Destroy Network
 
 ```bash
 cd terraform/layers/network
@@ -582,6 +593,42 @@ This deletes the IPAM (and all pools), the TGW, and the RAM shares.
 - Cause: A VPC still holds an allocation from the pool
 - Fix: Delete the VPC (or run workload environment `terraform destroy` first)
 
+**WARNING: VPC destroy takes 10-20 minutes — this is normal**
+
+Do not cancel `terraform destroy` when you see the VPC stuck in "Still
+destroying..." for many minutes. This is expected behavior for IPAM-allocated
+VPCs.
+
+- Cause: AWS must deallocate the CIDR back to the IPAM pool before releasing
+  the VPC object. All subnets, route tables, and TGW attachments will be gone
+  already — but the VPC itself stays in "deleting" state while AWS completes
+  the IPAM deallocation internally. There is nothing to fix.
+- Terraform's built-in VPC delete timeout is 20 minutes, which is usually
+  enough. The `aws_vpc` resource does not support custom timeouts.
+- If it does time out: just run `terraform destroy` again. It will succeed
+  immediately since AWS will have finished the cleanup by then.
+- **Tip**: Dev and prod have separate state locks, so you can destroy them
+  in parallel from two terminals. Just wait for both to finish before
+  destroying the network layer.
+
 **Error: RAM share can't be deleted**
 - Cause: Resources are still associated
 - Fix: Disassociate resources from the share first, then delete the share
+
+**Error: `DependencyViolation` deleting IPAM pool root — pool cidrs still provisioned**
+- Cause: Most commonly caused by interrupting a `terraform destroy` mid-run
+  (Ctrl-C or closing the terminal). AWS completed some deletions but Terraform
+  state still lists those resources. On re-run, Terraform tries to delete
+  resources that are already gone or in a zombie state, causing contradictory
+  errors (AWS says NotFound on direct queries but DependencyViolation on delete).
+- Fix: Remove the stuck resources from Terraform state and re-run:
+
+```bash
+terraform state rm module.ipam.aws_vpc_ipam_pool.root
+terraform state rm module.ipam.aws_vpc_ipam.main
+terraform destroy
+```
+
+> **Important**: Never interrupt (Ctrl-C) a `terraform destroy` mid-run.
+> Always let it complete or error out naturally. If you must stop, be
+> prepared to reconcile state manually using `terraform state rm`.

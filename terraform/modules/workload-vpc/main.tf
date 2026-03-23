@@ -51,6 +51,11 @@ resource "aws_vpc" "main" {
     Environment = var.environment
     Project     = var.project
   }
+
+  # IPAM-allocated VPCs are slow to delete. AWS must deallocate the CIDR back
+  # to the IPAM pool before releasing the VPC. This routinely takes 10-20
+  # minutes after all subnets and attachments are gone. Terraform's built-in
+  # timeout (20m) is usually sufficient. If it times out, re-run destroy.
 }
 
 # -----------------------------------------------------------------------------

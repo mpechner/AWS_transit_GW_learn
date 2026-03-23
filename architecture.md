@@ -136,6 +136,18 @@ guardrail an infrastructure control, not a process control.
 768 IPs monitored) that is approximately $0.15/month. Acceptable for a learning
 environment.
 
+**Trade-off: IPAM adds operational overhead to labs**. IPAM was chosen here to
+learn the service, but it comes with costs beyond dollars:
+- VPC deletion takes 10-20 minutes while AWS deallocates the CIDR back to the pool
+- Requires IPAM delegated admin setup in the management account
+- Requires AWS Organizations service access for `ipam.amazonaws.com`
+- RAM shares add another layer to troubleshoot
+
+For a quick lab where learning IPAM is not the goal, hardcoding CIDRs per account
+(`cidr_block = "10.0.1.0/24"`) would be simpler, faster to deploy, and
+significantly faster to tear down. IPAM shines in production where preventing
+CIDR conflicts across dozens of accounts justifies the complexity.
+
 ---
 
 ## Why Transit Gateway?
