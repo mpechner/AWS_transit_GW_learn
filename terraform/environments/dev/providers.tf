@@ -12,8 +12,8 @@ terraform {
 # Provider for the dev workload account.
 #
 # Assumes the terraform-execute role in the dev account only.
-# This environment does not need access to the network account — the TGW
-# and IPAM pool IDs are passed in as variables, not looked up via data sources.
+# The TGW and IPAM pool IDs are read from the network layer's remote state
+# (see data.tf), which uses ambient credentials to access S3 — not this provider.
 provider "aws" {
   region = var.aws_region
 

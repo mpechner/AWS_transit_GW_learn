@@ -16,22 +16,25 @@ AWS_transit_GW_learn/
 │
 ├── terraform/
 │   │
-│   ├── environments/            # Deployable root modules (one per account)
+│   ├── layers/                  # Foundational infrastructure (deploy first)
+│   │   │
+│   │   └── network/             # Network/shared-services account
+│   │       ├── providers.tf     # AWS provider, assumes terraform-execute in network account
+│   │       ├── backend.tf       # S3 remote state (key: network/)
+│   │       ├── variables.tf     # Account IDs, org ID, CIDR ranges
+│   │       ├── main.tf          # Calls ipam, transit-gateway, and workload-vpc modules
+│   │       ├── outputs.tf       # Exports TGW ID, IPAM pool IDs, network VPC ID
+│   │       └── terraform.tfvars.example
+│   │
+│   ├── environments/            # Workload environments (one per account)
 │   │   │                        # Each has its own state file.
 │   │   │                        # Run `terraform apply` from inside each directory.
-│   │   │
-│   │   ├── network/             # Network/shared-services account
-│   │   │   ├── providers.tf     # AWS provider, assumes terraform-execute in network account
-│   │   │   ├── backend.tf       # S3 remote state (key: network/)
-│   │   │   ├── variables.tf     # Account IDs, org ID, CIDR ranges
-│   │   │   ├── main.tf          # Calls ipam and transit-gateway modules
-│   │   │   ├── outputs.tf       # Exports TGW ID and IPAM pool IDs
-│   │   │   └── terraform.tfvars.example
 │   │   │
 │   │   ├── dev/                 # Dev workload account
 │   │   │   ├── providers.tf     # AWS provider, assumes terraform-execute in dev account
 │   │   │   ├── backend.tf       # S3 remote state (key: dev/)
-│   │   │   ├── variables.tf     # Dev account ID, TGW ID, IPAM pool ID (from network outputs)
+│   │   │   ├── data.tf          # terraform_remote_state — reads network layer outputs
+│   │   │   ├── variables.tf     # Dev account ID, AZs, route destinations
 │   │   │   ├── main.tf          # Calls workload-vpc module
 │   │   │   ├── outputs.tf       # Exports VPC ID, attachment ID
 │   │   │   └── terraform.tfvars.example
@@ -39,6 +42,7 @@ AWS_transit_GW_learn/
 │   │   └── prod/                # Prod workload account (mirrors dev structure)
 │   │       ├── providers.tf
 │   │       ├── backend.tf
+│   │       ├── data.tf
 │   │       ├── variables.tf
 │   │       ├── main.tf
 │   │       ├── outputs.tf
@@ -47,7 +51,7 @@ AWS_transit_GW_learn/
 │   └── modules/                 # Reusable modules (not deployed directly)
 │       │
 │       ├── ipam/                # AWS IPAM instance + pool hierarchy + RAM sharing
-│       │   ├── main.tf          # IPAM, root/regional/dev/prod pools, RAM share
+│       │   ├── main.tf          # IPAM, root/regional/network/dev/prod pools, RAM share
 │       │   ├── variables.tf
 │       │   └── outputs.tf       # Pool IDs and ARNs
 │       │
@@ -67,49 +71,63 @@ AWS_transit_GW_learn/
 
 ---
 
-## Environments vs Modules
+## Layers, Environments, and Modules
 
-**Environments** (`terraform/environments/`) are root Terraform modules.
+**Layers** (`terraform/layers/`) are foundational infrastructure that must be
+deployed before any environment. The network layer creates shared resources
+(IPAM, Transit Gateway) that workload environments depend on.
+
+**Environments** (`terraform/environments/`) are workload root modules.
 They have backends, providers, and state. You run `terraform apply` from inside them.
 Each environment corresponds to one AWS account and one state file.
+They read network layer outputs via `terraform_remote_state` (see `data.tf`).
 
 **Modules** (`terraform/modules/`) are reusable building blocks.
-They have no backend or provider configuration. They are called by environments.
-They accept variables and return outputs.
+They have no backend or provider configuration. They are called by layers
+and environments. They accept variables and return outputs.
 
 This separation means:
 - The `workload-vpc` module can be called with different variables for dev and prod
 - Adding a new environment (e.g., staging) means creating a new environment directory
   and calling the same modules — no module code changes needed
+- The layer/environment split makes the deployment dependency hierarchy explicit
 - Modules are tested implicitly when environments are applied
 
 ---
 
-## Data Flow Between Environments
+## Data Flow Between Layers and Environments
 
-Environments are isolated by design. Values pass between them explicitly:
+The network layer's outputs are consumed by workload environments via
+`terraform_remote_state`. No manual copy step is required.
 
 ```
-environments/network (apply first)
-  └── terraform output transit_gateway_id     → copy into dev/terraform.tfvars
-  └── terraform output dev_ipam_pool_id       → copy into dev/terraform.tfvars
-  └── terraform output prod_ipam_pool_id      → copy into prod/terraform.tfvars
-  └── terraform output transit_gateway_id     → copy into prod/terraform.tfvars
+layers/network (apply first)
+  └── outputs: transit_gateway_id, network/dev/prod_ipam_pool_id, network_vpc_id
+        │
+        │  terraform_remote_state (reads S3 state directly)
+        │
+        ├──► environments/dev/data.tf
+        │      (transit_gateway_id, dev_ipam_pool_id)
+        │
+        └──► environments/prod/data.tf
+               (transit_gateway_id, prod_ipam_pool_id)
 
 environments/dev (apply second)
-  └── reads transit_gateway_id, dev_ipam_pool_id from terraform.tfvars
+  └── reads network outputs from remote state automatically
 
 environments/prod (apply third)
-  └── reads transit_gateway_id, prod_ipam_pool_id from terraform.tfvars
+  └── reads network outputs from remote state automatically
 ```
 
-**Why not `terraform_remote_state`?**
-Remote state data sources are more automated but hide dependencies inside
-Terraform code, making them harder to understand for new users. For this
-learning repo, explicit variables make the dependency graph visible.
+The `terraform_remote_state` data source uses ambient AWS credentials (the
+same identity running Terraform) to read the S3 state bucket. It is not
+affected by the provider's `assume_role` into the workload account.
 
-Production pattern: Use `data "terraform_remote_state"` or write outputs to
-SSM Parameter Store and read them with `data "aws_ssm_parameter"`.
+If the network layer has not been applied yet, `terraform plan` in dev or
+prod will fail with a clear error — this implicitly enforces deployment order.
+
+Production alternative: Write outputs to SSM Parameter Store and read them
+with `data "aws_ssm_parameter"` for even looser coupling.
 
 ---
 
@@ -118,7 +136,7 @@ SSM Parameter Store and read them with `data "aws_ssm_parameter"`.
 | Pattern | tf_take2 source | How it's used here |
 |---------|-----------------|--------------------|
 | `assume_role` provider | Any environment's `providers.tf` | Each environment's `providers.tf` assumes `terraform-execute` using the same pattern |
-| S3 + DynamoDB backend | Any environment's `backend.tf` | Each environment uses the same bucket with environment-specific state keys |
+| S3 backend with native locking | Any environment's `backend.tf` | Each environment uses the same bucket with environment-specific state keys |
 | `terraform-execute` role | `TF_org_user/` | Referenced by ARN; not recreated |
 | Tagging convention | Project-wide | `Project`, `Environment`, `ManagedBy` tags on all resources |
 
@@ -162,9 +180,10 @@ To add a `staging` account:
 2. Update `providers.tf` to assume `terraform-execute` in the staging account
 3. Update `backend.tf` key to `transit-gw-learn/staging/terraform.tfstate`
 4. Update `variables.tf` to use `staging_account_id` instead of `dev_account_id`
-5. Update `main.tf` to pass `environment = "staging"` to the workload-vpc module
-6. Create `terraform.tfvars` with staging account ID and the shared TGW/IPAM values
-7. Run `terraform init` and `terraform apply`
+5. Update `data.tf` to read the correct IPAM pool (add a `staging_ipam_pool_id` output to the network layer)
+6. Update `main.tf` to pass `environment = "staging"` to the workload-vpc module
+7. Create `terraform.tfvars` with the staging account ID
+8. Run `terraform init` and `terraform apply`
 
 No module changes required. The `workload-vpc` module already supports any
 environment name through its `environment` variable.

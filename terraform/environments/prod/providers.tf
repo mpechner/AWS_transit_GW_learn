@@ -10,6 +10,8 @@ terraform {
 }
 
 # Provider for the prod workload account.
+# The TGW and IPAM pool IDs are read from the network layer's remote state
+# (see data.tf), which uses ambient credentials to access S3 — not this provider.
 provider "aws" {
   region = var.aws_region
 

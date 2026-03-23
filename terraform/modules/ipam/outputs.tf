@@ -23,6 +23,16 @@ output "regional_pool_id" {
   value       = aws_vpc_ipam_pool.regional.id
 }
 
+output "network_pool_id" {
+  description = "ID of the network account IPAM pool."
+  value       = aws_vpc_ipam_pool.network.id
+}
+
+output "network_pool_arn" {
+  description = "ARN of the network account IPAM pool."
+  value       = aws_vpc_ipam_pool.network.arn
+}
+
 output "dev_pool_id" {
   description = "ID of the dev workload IPAM pool. Pass this to the dev environment as dev_ipam_pool_id."
   value       = aws_vpc_ipam_pool.dev.id

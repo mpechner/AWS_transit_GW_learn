@@ -216,4 +216,3 @@ terraform.tfvars
 # to prevent silent substitution of provider versions (supply chain control).
 .terraform/
 *.tfplan
-*.tfplan

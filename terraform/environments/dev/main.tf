@@ -8,7 +8,7 @@
 #   - A TGW attachment to the shared Transit Gateway
 #
 # Prerequisites (must be applied first):
-#   - environments/network — provides TGW ID and IPAM pool ID
+#   - layers/network — provides TGW ID and IPAM pool ID (read via remote state)
 #   - RAM organization sharing enabled and propagated (~60 seconds after network apply)
 # =============================================================================
 
@@ -30,8 +30,8 @@ module "vpc" {
 
   environment           = "dev"
   project               = var.project
-  ipam_pool_id          = var.dev_ipam_pool_id
-  transit_gateway_id    = var.transit_gateway_id
+  ipam_pool_id          = data.terraform_remote_state.network.outputs.dev_ipam_pool_id
+  transit_gateway_id    = data.terraform_remote_state.network.outputs.transit_gateway_id
   availability_zones    = var.availability_zones
-  tgw_route_destination = var.tgw_route_destination
+  tgw_route_destination = data.terraform_remote_state.network.outputs.regional_cidr
 }

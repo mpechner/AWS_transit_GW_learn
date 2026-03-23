@@ -2,49 +2,122 @@
 # =============================================================================
 # verify.sh — Post-deployment validation for Transit Gateway + IPAM
 # =============================================================================
-# Usage:
-#   NETWORK_ACCOUNT_ID=111111111111 \
-#   DEV_ACCOUNT_ID=222222222222 \
-#   PROD_ACCOUNT_ID=333333333333 \
-#   TGW_ID=tgw-xxxxxxxxxxxxxxxxx \
-#   AWS_REGION=us-west-2 \
-#     bash scripts/verify.sh
+# Auto-detects all values from Terraform state. Just run from the repo root
+# after all three environments are applied:
+#
+#   bash scripts/verify.sh
+#
+# Override any value with an environment variable:
+#
+#   AWS_REGION=us-east-1 bash scripts/verify.sh
 #
 # Prerequisites:
 #   - AWS CLI v2 installed
 #   - Credentials that can assume terraform-execute in all three accounts
-#   - All three environments successfully applied
+#   - All three environments successfully applied (terraform state accessible)
 # =============================================================================
 
-set -euo pipefail
+set -eo pipefail
 
-ROLE_NAME="terraform-execute"
-REGION="${AWS_REGION:-us-west-2}"
+# ---------------------------------------------------------------------------
+# Locate Terraform directories relative to this script
+# ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+NETWORK_DIR="${REPO_ROOT}/terraform/layers/network"
+DEV_DIR="${REPO_ROOT}/terraform/environments/dev"
+PROD_DIR="${REPO_ROOT}/terraform/environments/prod"
 
-# Required environment variables
-: "${NETWORK_ACCOUNT_ID:?Set NETWORK_ACCOUNT_ID}"
-: "${DEV_ACCOUNT_ID:?Set DEV_ACCOUNT_ID}"
-: "${PROD_ACCOUNT_ID:?Set PROD_ACCOUNT_ID}"
-: "${TGW_ID:?Set TGW_ID (from terraform output transit_gateway_id in environments/network)}"
+# ---------------------------------------------------------------------------
+# Helper: read a single terraform output; returns empty string on failure
+# ---------------------------------------------------------------------------
+tf_output() {
+  local dir="$1" key="$2"
+  if [ -d "${dir}/.terraform" ]; then
+    terraform -chdir="${dir}" output -raw "${key}" 2>/dev/null || true
+  fi
+}
 
-PASS=0
-FAIL=0
-
+# ---------------------------------------------------------------------------
 # Colors (only if terminal supports it)
+# ---------------------------------------------------------------------------
 if [ -t 1 ]; then
   GREEN='\033[0;32m'
   RED='\033[0;31m'
   YELLOW='\033[1;33m'
+  DIM='\033[2m'
   NC='\033[0m'
 else
-  GREEN='' RED='' YELLOW='' NC=''
+  GREEN='' RED='' YELLOW='' DIM='' NC=''
 fi
 
+PASS=0
+FAIL=0
 pass() { echo -e "${GREEN}[PASS]${NC} $1"; PASS=$((PASS + 1)); }
 fail() { echo -e "${RED}[FAIL]${NC} $1"; FAIL=$((FAIL + 1)); }
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
+show_cmd() { echo -e "${DIM}\$ $*${NC}"; }
 
-# Assume a role and export credentials
+# ---------------------------------------------------------------------------
+# Auto-detect from Terraform state (env vars take precedence)
+# ---------------------------------------------------------------------------
+echo ""
+info "Reading values from Terraform state..."
+
+NETWORK_ACCOUNT_ID="${NETWORK_ACCOUNT_ID:-$(tf_output "${NETWORK_DIR}" network_account_id)}"
+TGW_ID="${TGW_ID:-$(tf_output "${NETWORK_DIR}" transit_gateway_id)}"
+TF_REGION="$(tf_output "${NETWORK_DIR}" aws_region)"
+DEV_ACCOUNT_ID="${DEV_ACCOUNT_ID:-$(tf_output "${DEV_DIR}" account_id)}"
+PROD_ACCOUNT_ID="${PROD_ACCOUNT_ID:-$(tf_output "${PROD_DIR}" account_id)}"
+
+REGION="${AWS_REGION:-${TF_REGION:-us-west-2}}"
+
+# ---------------------------------------------------------------------------
+# Validate — show what was detected and what's missing
+# ---------------------------------------------------------------------------
+MISSING=0
+[ -z "${NETWORK_ACCOUNT_ID:-}" ] && echo -e "${RED}Error:${NC} NETWORK_ACCOUNT_ID not found in state or env" && MISSING=1
+[ -z "${DEV_ACCOUNT_ID:-}" ]     && echo -e "${RED}Error:${NC} DEV_ACCOUNT_ID not found in state or env"     && MISSING=1
+[ -z "${PROD_ACCOUNT_ID:-}" ]    && echo -e "${RED}Error:${NC} PROD_ACCOUNT_ID not found in state or env"    && MISSING=1
+[ -z "${TGW_ID:-}" ]             && echo -e "${RED}Error:${NC} TGW_ID not found in state or env"             && MISSING=1
+
+if [ "${MISSING}" -eq 1 ]; then
+  echo ""
+  echo "Auto-detection reads 'terraform output' from:"
+  echo "  ${NETWORK_DIR}"
+  echo "  ${DEV_DIR}"
+  echo "  ${PROD_DIR}"
+  echo ""
+  echo "All three environments must be applied first (terraform apply)."
+  echo "Or set missing values as environment variables:"
+  echo ""
+  echo "  NETWORK_ACCOUNT_ID=111111111111 \\"
+  echo "  DEV_ACCOUNT_ID=222222222222 \\"
+  echo "  PROD_ACCOUNT_ID=333333333333 \\"
+  echo "  TGW_ID=tgw-xxxxxxxxxxxxxxxxx \\"
+  echo "    bash scripts/verify.sh"
+  exit 1
+fi
+
+set -u
+
+ROLE_NAME="terraform-execute"
+
+echo ""
+echo "====================================================================="
+echo " AWS Transit Gateway + IPAM Deployment Verification"
+echo "====================================================================="
+echo " Region:          ${REGION}"
+echo " Network Account: ${NETWORK_ACCOUNT_ID}"
+echo " Dev Account:     ${DEV_ACCOUNT_ID}"
+echo " Prod Account:    ${PROD_ACCOUNT_ID}"
+echo " TGW ID:          ${TGW_ID}"
+echo "====================================================================="
+echo ""
+
+# ---------------------------------------------------------------------------
+# Helper: assume a role and export credentials
+# ---------------------------------------------------------------------------
 assume_role() {
   local account_id="$1"
   local role_name="$2"
@@ -62,22 +135,9 @@ assume_role() {
   export AWS_SESSION_TOKEN=$(echo "$creds" | python3 -c "import sys,json; print(json.load(sys.stdin)['SessionToken'])")
 }
 
-# Clear assumed role credentials
 clear_role() {
   unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 }
-
-echo ""
-echo "====================================================================="
-echo " AWS Transit Gateway + IPAM Deployment Verification"
-echo "====================================================================="
-echo " Region:          ${REGION}"
-echo " Network Account: ${NETWORK_ACCOUNT_ID}"
-echo " Dev Account:     ${DEV_ACCOUNT_ID}"
-echo " Prod Account:    ${PROD_ACCOUNT_ID}"
-echo " TGW ID:          ${TGW_ID}"
-echo "====================================================================="
-echo ""
 
 # ---------------------------------------------------------------------------
 # CHECK 1: TGW exists in network account
@@ -108,13 +168,12 @@ ATTACHMENT_COUNT=$(aws ec2 describe-transit-gateway-attachments \
   --query 'length(TransitGatewayAttachments)' \
   --output text)
 
-if [ "${ATTACHMENT_COUNT}" -ge 2 ]; then
-  pass "TGW has ${ATTACHMENT_COUNT} available attachment(s) (expected >= 2)"
+if [ "${ATTACHMENT_COUNT}" -ge 3 ]; then
+  pass "TGW has ${ATTACHMENT_COUNT} available attachment(s) (expected >= 3: network, dev, prod)"
 else
-  fail "TGW has ${ATTACHMENT_COUNT} available attachment(s) (expected >= 2)"
+  fail "TGW has ${ATTACHMENT_COUNT} available attachment(s) (expected >= 3: network, dev, prod)"
 fi
 
-# Show attachment details
 echo ""
 info "TGW Attachment Details:"
 aws ec2 describe-transit-gateway-attachments \
@@ -145,10 +204,10 @@ if [ -n "${TGW_RT_ID}" ] && [ "${TGW_RT_ID}" != "None" ]; then
     --query 'length(Routes)' \
     --output text)
 
-  if [ "${ROUTE_COUNT}" -ge 2 ]; then
-    pass "TGW route table has ${ROUTE_COUNT} propagated route(s) (expected >= 2)"
+  if [ "${ROUTE_COUNT}" -ge 3 ]; then
+    pass "TGW route table has ${ROUTE_COUNT} propagated route(s) (expected >= 3: network, dev, prod)"
   else
-    fail "TGW route table has ${ROUTE_COUNT} propagated route(s) (expected >= 2 — dev and prod)"
+    fail "TGW route table has ${ROUTE_COUNT} propagated route(s) (expected >= 3: network, dev, prod)"
   fi
 
   echo ""
@@ -167,7 +226,44 @@ fi
 clear_role
 
 # ---------------------------------------------------------------------------
-# CHECK 4: Dev VPC exists with correct CIDR
+# CHECK 4: Network VPC exists with correct CIDR
+# ---------------------------------------------------------------------------
+info "Checking network VPC..."
+assume_role "${NETWORK_ACCOUNT_ID}" "${ROLE_NAME}" "verify-network-vpc"
+
+NET_VPC=$(aws ec2 describe-vpcs \
+  --filters "Name=tag:Environment,Values=network" "Name=tag:Project,Values=aws-transit-gw-learn" \
+  --region "${REGION}" \
+  --query 'Vpcs[0].{Id:VpcId,CIDR:CidrBlock,State:State}' \
+  --output json)
+
+NET_VPC_ID=$(echo "${NET_VPC}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('Id','NOT_FOUND'))")
+NET_VPC_CIDR=$(echo "${NET_VPC}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('CIDR','UNKNOWN'))")
+
+if [ "${NET_VPC_ID}" != "NOT_FOUND" ] && [ "${NET_VPC_ID}" != "None" ]; then
+  pass "Network VPC found: ${NET_VPC_ID} (CIDR: ${NET_VPC_CIDR})"
+else
+  fail "Network VPC not found (tag:Environment=network, tag:Project=aws-transit-gw-learn)"
+fi
+
+if [ "${NET_VPC_ID}" != "NOT_FOUND" ] && [ "${NET_VPC_ID}" != "None" ]; then
+  TGW_ROUTE=$(aws ec2 describe-route-tables \
+    --filters "Name=vpc-id,Values=${NET_VPC_ID}" \
+    --region "${REGION}" \
+    --query "RouteTables[].Routes[?TransitGatewayId=='${TGW_ID}'].DestinationCidrBlock" \
+    --output text)
+
+  if [ -n "${TGW_ROUTE}" ]; then
+    pass "Network route table has TGW route: ${TGW_ROUTE} → ${TGW_ID}"
+  else
+    fail "Network route table missing TGW route to ${TGW_ID}"
+  fi
+fi
+
+clear_role
+
+# ---------------------------------------------------------------------------
+# CHECK 5: Dev VPC exists with correct CIDR
 # ---------------------------------------------------------------------------
 info "Checking dev VPC..."
 assume_role "${DEV_ACCOUNT_ID}" "${ROLE_NAME}" "verify-dev"
@@ -187,8 +283,7 @@ else
   fail "Dev VPC not found (tag:Environment=dev, tag:Project=aws-transit-gw-learn)"
 fi
 
-# Check dev route table has TGW route
-if [ "${DEV_VPC_ID}" != "NOT_FOUND" ]; then
+if [ "${DEV_VPC_ID}" != "NOT_FOUND" ] && [ "${DEV_VPC_ID}" != "None" ]; then
   TGW_ROUTE=$(aws ec2 describe-route-tables \
     --filters "Name=vpc-id,Values=${DEV_VPC_ID}" \
     --region "${REGION}" \
@@ -205,7 +300,7 @@ fi
 clear_role
 
 # ---------------------------------------------------------------------------
-# CHECK 5: Prod VPC exists with correct CIDR
+# CHECK 6: Prod VPC exists with correct CIDR
 # ---------------------------------------------------------------------------
 info "Checking prod VPC..."
 assume_role "${PROD_ACCOUNT_ID}" "${ROLE_NAME}" "verify-prod"
@@ -225,8 +320,7 @@ else
   fail "Prod VPC not found"
 fi
 
-# Check prod route table has TGW route
-if [ "${PROD_VPC_ID}" != "NOT_FOUND" ]; then
+if [ "${PROD_VPC_ID}" != "NOT_FOUND" ] && [ "${PROD_VPC_ID}" != "None" ]; then
   TGW_ROUTE=$(aws ec2 describe-route-tables \
     --filters "Name=vpc-id,Values=${PROD_VPC_ID}" \
     --region "${REGION}" \
@@ -238,6 +332,238 @@ if [ "${PROD_VPC_ID}" != "NOT_FOUND" ]; then
   else
     fail "Prod route table missing TGW route to ${TGW_ID}"
   fi
+fi
+
+clear_role
+
+# ===========================================================================
+#  RESOURCE INVENTORY — show command, then its output
+# ===========================================================================
+echo ""
+echo "====================================================================="
+echo " Resource Inventory"
+echo "====================================================================="
+echo ""
+echo " Each command is printed before its output so you can copy-paste it."
+echo " Network account commands require: assume terraform-execute in ${NETWORK_ACCOUNT_ID}"
+
+# ---------------------------------------------------------------------------
+# IPAM (network account)
+# ---------------------------------------------------------------------------
+assume_role "${NETWORK_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inventory"
+
+echo ""
+info "--- IPAM ---"
+
+echo ""
+show_cmd "aws ec2 describe-ipams --region ${REGION} --query 'Ipams[].{ID:IpamId,State:State,Regions:OperatingRegions[].RegionName|join(\`, \`,@)}' --output table"
+aws ec2 describe-ipams \
+  --region "${REGION}" \
+  --query 'Ipams[].{ID:IpamId,State:State,Regions:OperatingRegions[].RegionName|join(`, `,@)}' \
+  --output table
+
+echo ""
+show_cmd "aws ec2 describe-ipam-pools --region ${REGION} --query 'IpamPools[].{Description:Description,PoolId:IpamPoolId,Locale:Locale,State:State}' --output table"
+aws ec2 describe-ipam-pools \
+  --region "${REGION}" \
+  --query 'IpamPools[].{Description:Description,PoolId:IpamPoolId,Locale:Locale,State:State}' \
+  --output table 2>/dev/null || true
+
+IPAM_POOL_IDS=$(aws ec2 describe-ipam-pools \
+  --region "${REGION}" \
+  --query 'IpamPools[].IpamPoolId' \
+  --output text)
+
+for POOL_ID in ${IPAM_POOL_IDS}; do
+  POOL_DESC=$(aws ec2 describe-ipam-pools \
+    --region "${REGION}" \
+    --filters "Name=ipam-pool-id,Values=${POOL_ID}" \
+    --query 'IpamPools[0].Description' \
+    --output text 2>/dev/null || echo "${POOL_ID}")
+  echo ""
+  info "  ${POOL_DESC}:"
+  show_cmd "aws ec2 get-ipam-pool-cidrs --ipam-pool-id ${POOL_ID} --region ${REGION} --output table"
+  aws ec2 get-ipam-pool-cidrs \
+    --ipam-pool-id "${POOL_ID}" \
+    --region "${REGION}" \
+    --query 'IpamPoolCidrs[].{CIDR:Cidr,State:State}' \
+    --output table 2>/dev/null || echo "  (no CIDRs)"
+
+  ALLOC_COUNT=$(aws ec2 get-ipam-pool-allocations \
+    --ipam-pool-id "${POOL_ID}" \
+    --region "${REGION}" \
+    --query 'length(IpamPoolAllocations)' \
+    --output text 2>/dev/null || echo "0")
+  if [ "${ALLOC_COUNT}" -gt 0 ] 2>/dev/null; then
+    show_cmd "aws ec2 get-ipam-pool-allocations --ipam-pool-id ${POOL_ID} --region ${REGION} --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId}' --output table"
+    aws ec2 get-ipam-pool-allocations \
+      --ipam-pool-id "${POOL_ID}" \
+      --region "${REGION}" \
+      --query 'IpamPoolAllocations[].{CIDR:Cidr,Type:ResourceType,ResourceId:ResourceId}' \
+      --output table
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# RAM (network account)
+# ---------------------------------------------------------------------------
+echo ""
+info "--- RAM Resource Shares ---"
+
+echo ""
+show_cmd "aws ram get-resource-shares --resource-owner SELF --region ${REGION} --query 'resourceShares[].{Name:name,Status:status}' --output table"
+aws ram get-resource-shares \
+  --resource-owner SELF \
+  --region "${REGION}" \
+  --query 'resourceShares[].{Name:name,Status:status}' \
+  --output table
+
+RAM_SHARE_ARNS=$(aws ram get-resource-shares \
+  --resource-owner SELF \
+  --region "${REGION}" \
+  --query 'resourceShares[].resourceShareArn' \
+  --output text)
+
+for SHARE_ARN in ${RAM_SHARE_ARNS}; do
+  SHARE_NAME=$(aws ram get-resource-shares \
+    --resource-owner SELF \
+    --region "${REGION}" \
+    --resource-share-arns "${SHARE_ARN}" \
+    --query 'resourceShares[0].name' \
+    --output text)
+
+  echo ""
+  info "  ${SHARE_NAME} — resources:"
+  show_cmd "aws ram list-resources --resource-owner SELF --resource-share-arns ${SHARE_ARN} --region ${REGION} --query 'resources[].{Type:type,ARN:arn,Status:status}' --output table"
+  aws ram list-resources \
+    --resource-owner SELF \
+    --resource-share-arns "${SHARE_ARN}" \
+    --region "${REGION}" \
+    --query 'resources[].{Type:type,ARN:arn,Status:status}' \
+    --output table 2>/dev/null || echo "    (none)"
+
+  info "  ${SHARE_NAME} — principals:"
+  show_cmd "aws ram list-principals --resource-owner SELF --resource-share-arns ${SHARE_ARN} --region ${REGION} --query 'principals[].{Principal:id,Status:status}' --output table"
+  aws ram list-principals \
+    --resource-owner SELF \
+    --resource-share-arns "${SHARE_ARN}" \
+    --region "${REGION}" \
+    --query 'principals[].{Principal:id,Status:status}' \
+    --output table 2>/dev/null || echo "    (none)"
+done
+
+# ---------------------------------------------------------------------------
+# Transit Gateway (network account)
+# ---------------------------------------------------------------------------
+echo ""
+info "--- Transit Gateway ---"
+
+echo ""
+show_cmd "aws ec2 describe-transit-gateways --transit-gateway-ids ${TGW_ID} --region ${REGION} --query 'TransitGateways[0].{ID:TransitGatewayId,State:State,AutoAccept:Options.AutoAcceptSharedAttachments,DefaultRtAssoc:Options.DefaultRouteTableAssociation,DefaultRtProp:Options.DefaultRouteTablePropagation,DnsSupport:Options.DnsSupport,VpnEcmp:Options.VpnEcmpSupport}' --output table"
+aws ec2 describe-transit-gateways \
+  --transit-gateway-ids "${TGW_ID}" \
+  --region "${REGION}" \
+  --query 'TransitGateways[0].{ID:TransitGatewayId,State:State,AutoAccept:Options.AutoAcceptSharedAttachments,DefaultRtAssoc:Options.DefaultRouteTableAssociation,DefaultRtProp:Options.DefaultRouteTablePropagation,DnsSupport:Options.DnsSupport,VpnEcmp:Options.VpnEcmpSupport}' \
+  --output table
+
+echo ""
+show_cmd "aws ec2 describe-transit-gateway-attachments --filters 'Name=transit-gateway-id,Values=${TGW_ID}' --region ${REGION} --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,Account:CreatedBy,ResourceId:ResourceId}' --output table"
+aws ec2 describe-transit-gateway-attachments \
+  --filters "Name=transit-gateway-id,Values=${TGW_ID}" \
+  --region "${REGION}" \
+  --query 'TransitGatewayAttachments[].{State:State,Type:ResourceType,Account:CreatedBy,ResourceId:ResourceId}' \
+  --output table
+
+if [ -n "${TGW_RT_ID:-}" ] && [ "${TGW_RT_ID}" != "None" ]; then
+  echo ""
+  show_cmd "aws ec2 search-transit-gateway-routes --transit-gateway-route-table-id ${TGW_RT_ID} --filters 'Name=state,Values=active' --region ${REGION} --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,State:State}' --output table"
+  aws ec2 search-transit-gateway-routes \
+    --transit-gateway-route-table-id "${TGW_RT_ID}" \
+    --filters "Name=state,Values=active" \
+    --region "${REGION}" \
+    --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,State:State}' \
+    --output table
+fi
+
+clear_role
+
+# ---------------------------------------------------------------------------
+# VPC Detail: Network Account
+# ---------------------------------------------------------------------------
+echo ""
+info "--- Network VPC (account ${NETWORK_ACCOUNT_ID}) ---"
+assume_role "${NETWORK_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-network"
+
+if [ "${NET_VPC_ID}" != "NOT_FOUND" ] && [ "${NET_VPC_ID}" != "None" ]; then
+  echo ""
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${NET_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=${NET_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --output table
+
+  echo ""
+  show_cmd "aws ec2 describe-route-tables --filters 'Name=vpc-id,Values=${NET_VPC_ID}' --region ${REGION} --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||\`local\`,State:State}' --output table"
+  aws ec2 describe-route-tables \
+    --filters "Name=vpc-id,Values=${NET_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||`local`,State:State}' \
+    --output table
+fi
+
+clear_role
+
+# ---------------------------------------------------------------------------
+# VPC Detail: Dev Account
+# ---------------------------------------------------------------------------
+echo ""
+info "--- Dev VPC (account ${DEV_ACCOUNT_ID}) ---"
+assume_role "${DEV_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-dev"
+
+if [ "${DEV_VPC_ID}" != "NOT_FOUND" ] && [ "${DEV_VPC_ID}" != "None" ]; then
+  echo ""
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${DEV_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=${DEV_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --output table
+
+  echo ""
+  show_cmd "aws ec2 describe-route-tables --filters 'Name=vpc-id,Values=${DEV_VPC_ID}' --region ${REGION} --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||\`local\`,State:State}' --output table"
+  aws ec2 describe-route-tables \
+    --filters "Name=vpc-id,Values=${DEV_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||`local`,State:State}' \
+    --output table
+fi
+
+clear_role
+
+# ---------------------------------------------------------------------------
+# VPC Detail: Prod Account
+# ---------------------------------------------------------------------------
+echo ""
+info "--- Prod VPC (account ${PROD_ACCOUNT_ID}) ---"
+assume_role "${PROD_ACCOUNT_ID}" "${ROLE_NAME}" "verify-inv-prod"
+
+if [ "${PROD_VPC_ID}" != "NOT_FOUND" ] && [ "${PROD_VPC_ID}" != "None" ]; then
+  echo ""
+  show_cmd "aws ec2 describe-subnets --filters 'Name=vpc-id,Values=${PROD_VPC_ID}' --region ${REGION} --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' --output table"
+  aws ec2 describe-subnets \
+    --filters "Name=vpc-id,Values=${PROD_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'Subnets[].{SubnetId:SubnetId,CIDR:CidrBlock,AZ:AvailabilityZone,State:State}' \
+    --output table
+
+  echo ""
+  show_cmd "aws ec2 describe-route-tables --filters 'Name=vpc-id,Values=${PROD_VPC_ID}' --region ${REGION} --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||\`local\`,State:State}' --output table"
+  aws ec2 describe-route-tables \
+    --filters "Name=vpc-id,Values=${PROD_VPC_ID}" \
+    --region "${REGION}" \
+    --query 'RouteTables[].Routes[].{Destination:DestinationCidrBlock,Target:GatewayId||TransitGatewayId||NatGatewayId||`local`,State:State}' \
+    --output table
 fi
 
 clear_role
@@ -257,7 +583,7 @@ if [ "${FAIL}" -gt 0 ]; then
   echo "====================================================================="
   exit 1
 else
-  echo -e " ${RED}Failed: ${FAIL}${NC}"
+  echo -e " ${GREEN}Failed: ${FAIL}${NC}"
   echo ""
   echo " All checks passed. The Transit Gateway + IPAM deployment is healthy."
   echo " Next: use AWS Reachability Analyzer to verify logical connectivity."

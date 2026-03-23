@@ -20,6 +20,12 @@ variable "regional_cidr" {
   default     = "10.0.0.0/16"
 }
 
+variable "network_cidr" {
+  description = "CIDR block for the network account pool. Must be within regional_cidr and non-overlapping with dev/prod CIDRs."
+  type        = string
+  default     = "10.0.0.0/24"
+}
+
 variable "dev_cidr" {
   description = "CIDR block for the dev workload pool. Must be within regional_cidr."
   type        = string

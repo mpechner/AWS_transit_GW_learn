@@ -8,6 +8,7 @@ This repo builds a single-region, three-account AWS networking foundation:
 |-----------|---------|----------|
 | IPAM | Network | `aws_vpc_ipam`, pool hierarchy, RAM share |
 | Transit Gateway | Network | `aws_ec2_transit_gateway`, RAM share |
+| Network VPC | Network | VPC from IPAM pool, private subnets, TGW attachment |
 | Dev VPC | Dev | VPC from IPAM pool, private subnets, TGW attachment |
 | Prod VPC | Prod | VPC from IPAM pool, private subnets, TGW attachment |
 
@@ -33,32 +34,42 @@ the private RFC 1918 address space in Phase 1 (no internet gateway, no NAT).
 │  │  │ Root Pool              │     │ default_rt_prop:  enable      │    │   │
 │  │  │  10.0.0.0/8            │     │                              │    │   │
 │  │  │   │                    │     │ Route Table (default)         │    │   │
-│  │  │   └─ Regional Pool     │     │  10.0.1.0/24 → dev-attach    │    │   │
-│  │  │       10.0.0.0/16      │     │  10.0.2.0/24 → prod-attach   │    │   │
-│  │  │        │               │     │  (propagated automatically)   │    │   │
-│  │  │        ├─ Dev Pool     │     └──────────────┬───────────────┘    │   │
-│  │  │        │   10.0.1.0/24 │                    │                    │   │
-│  │  │        └─ Prod Pool    │         RAM-shared to org               │   │
+│  │  │   └─ Regional Pool     │     │  10.0.0.0/24 → net-attach    │    │   │
+│  │  │       10.0.0.0/16      │     │  10.0.1.0/24 → dev-attach    │    │   │
+│  │  │        │               │     │  10.0.2.0/24 → prod-attach   │    │   │
+│  │  │        ├─ Net Pool     │     │  (propagated automatically)   │    │   │
+│  │  │        │   10.0.0.0/24 │     └──────────────┬───────────────┘    │   │
+│  │  │        ├─ Dev Pool     │                    │                    │   │
+│  │  │        │   10.0.1.0/24 │         RAM-shared to org               │   │
+│  │  │        └─ Prod Pool    │                    │                    │   │
 │  │  │            10.0.2.0/24 │                    │                    │   │
 │  │  └──────────┬─────────────┘                    │                    │   │
 │  │             │ RAM-shared to org                 │                    │   │
-│  └─────────────┼─────────────────────────────────┼────────────────────┘   │
-│                │                                   │                        │
-│      ┌─────────┴────────┐               ┌──────────┴───────┐               │
-│      │                  │               │                  │               │
-│  ┌───┴──────────┐   ┌───┴──────────┐   │                  │               │
-│  │  Dev Account │   │ Prod Account │   │                  │               │
-│  │              │   │              │   │                  │               │
-│  │ VPC          │   │ VPC          │   │                  │               │
-│  │ 10.0.1.0/24  │   │ 10.0.2.0/24  │   │                  │               │
-│  │ (from IPAM)  │   │ (from IPAM)  │   │                  │               │
-│  │              │   │              │   │                  │               │
-│  │ Subnets:     │   │ Subnets:     │   │                  │               │
-│  │ 10.0.1.0/26  │   │ 10.0.2.0/26  │   │                  │               │
-│  │ 10.0.1.64/26 │   │ 10.0.2.64/26 │   │                  │               │
-│  │      │       │   │      │       │   │                  │               │
-│  │ TGW Attach ──┼───┼─TGW Attach ──┼───┘                  │               │
-│  └──────────────┘   └──────────────┘                       │               │
+│  │             │ (dev + prod pools only)           │                    │   │
+│  │                                                                      │   │
+│  │  Network VPC                                                         │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │ CIDR: 10.0.0.0/24 (from IPAM network pool)                  │   │   │
+│  │  │ Subnets: 10.0.0.0/26 (AZ-a), 10.0.0.64/26 (AZ-b)          │   │   │
+│  │  │ Route: 10.0.0.0/16 → TGW                                    │   │   │
+│  │  │ TGW Attachment ─────────────────────────────────────────┐    │   │   │
+│  │  └─────────────────────────────────────────────────────────┘    │   │   │
+│  │                                                                      │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌──────────────┐   ┌──────────────┐                                       │
+│  │  Dev Account │   │ Prod Account │                                       │
+│  │              │   │              │                                       │
+│  │ VPC          │   │ VPC          │                                       │
+│  │ 10.0.1.0/24  │   │ 10.0.2.0/24  │                                       │
+│  │ (from IPAM)  │   │ (from IPAM)  │                                       │
+│  │              │   │              │                                       │
+│  │ Subnets:     │   │ Subnets:     │                                       │
+│  │ 10.0.1.0/26  │   │ 10.0.2.0/26  │                                       │
+│  │ 10.0.1.64/26 │   │ 10.0.2.64/26 │                                       │
+│  │      │       │   │      │       │                                       │
+│  │ TGW Attach ──┼───┼─TGW Attach ──┼── (all attach to shared TGW)         │
+│  └──────────────┘   └──────────────┘                                       │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,18 +95,21 @@ Prod Subnet (10.0.2.0/26)
 ### Terraform State Dependency Flow
 
 ```
-environments/network
-  └── outputs: tgw_id, dev_ipam_pool_id, prod_ipam_pool_id
+layers/network
+  └── outputs: tgw_id, network/dev/prod_ipam_pool_id, network_vpc_id
         │
-        ├──► environments/dev/terraform.tfvars
+        │  terraform_remote_state (reads S3 state directly)
+        │
+        ├──► environments/dev/data.tf
         │      (transit_gateway_id, dev_ipam_pool_id)
         │
-        └──► environments/prod/terraform.tfvars
+        └──► environments/prod/data.tf
                (transit_gateway_id, prod_ipam_pool_id)
 ```
 
-Values flow via `terraform output` + manual tfvars in Phase 1.
-Phase 2 pattern: use `terraform_remote_state` data source.
+Values flow via `terraform_remote_state` — no manual copy step needed.
+If the network layer is not applied, `terraform plan` in dev/prod will fail,
+implicitly enforcing deployment order.
 
 ---
 
@@ -118,8 +132,9 @@ A spreadsheet is better than nothing but doesn't prevent conflicts — a develop
 can still create a VPC with any CIDR if IPAM isn't enforced. IPAM makes the
 guardrail an infrastructure control, not a process control.
 
-**IPAM cost**: $0.00027/IP/hour per monitored IP. For this lab (~512 IPs monitored)
-that is approximately $0.14/month. Acceptable for a learning environment.
+**IPAM cost**: $0.00027/IP/hour per monitored IP. For this lab (3 x /24 pools =
+768 IPs monitored) that is approximately $0.15/month. Acceptable for a learning
+environment.
 
 ---
 
@@ -182,17 +197,24 @@ need. This is the foundation of traffic segmentation — for example, preventing
 dev from reaching prod directly, and routing all inter-environment traffic through
 an inspection VPC first. See Phase 2 documentation.
 
-### Decision: Variables Over Remote State for Cross-Environment Dependencies
+### Decision: Remote State for Cross-Layer Dependencies
 
-**Chosen**: Values (TGW ID, IPAM pool IDs) are passed via `terraform.tfvars`.
+**Chosen**: Workload environments read the network layer's outputs via
+`data "terraform_remote_state"` (see `environments/*/data.tf`).
 
-**Rationale**: For a learning repo, explicit variables make the data flow visible.
-You can see exactly what each environment needs and where it comes from. Remote
-state data sources hide this dependency inside Terraform.
+**Rationale**: Remote state eliminates the error-prone manual copy step and
+implicitly enforces deployment ordering — if the network layer hasn't been
+applied, `terraform plan` fails with a clear error. The `data.tf` file in
+each environment makes the dependency explicit and discoverable.
 
-**Production alternative**: Use `terraform_remote_state` data source or an
-SSM Parameter Store pattern where the network environment writes outputs to SSM
-and workload environments read them. This removes the manual copy step.
+The `terraform_remote_state` data source reads S3 using ambient credentials
+(the same identity running Terraform), not the provider's assumed role. This
+avoids cross-account IAM complexity.
+
+**Production alternative**: Use SSM Parameter Store — the network layer writes
+outputs to SSM and workload environments read them with
+`data "aws_ssm_parameter"`. This provides even looser coupling and survives
+state backend changes.
 
 ### Decision: IPAM Pool Sizing
 
@@ -266,6 +288,11 @@ IPAM (private scope)
         │   Locale: us-west-2
         │   Carved from root pool
         │   In multi-region (Phase 2): add pools per region
+        │
+        ├── Network Pool: 10.0.0.0/24
+        │   Locale: us-west-2
+        │   Local to network account (not RAM-shared)
+        │   allocation_min/max/default: /24
         │
         ├── Dev Pool: 10.0.1.0/24
         │   Locale: us-west-2

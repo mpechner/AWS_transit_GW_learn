@@ -45,7 +45,9 @@ or OIDC identity provider (for CI/CD pipelines like GitHub Actions).
 
 ### Network Account (terraform-execute)
 
-Minimum permissions needed for this repo:
+Minimum permissions needed for this repo. The network account creates IPAM,
+TGW, RAM shares, **and** its own VPC (with subnets, route table, and TGW
+attachment), so it needs both the shared-infrastructure and VPC permissions:
 
 ```json
 {
@@ -66,7 +68,9 @@ Minimum permissions needed for this repo:
         "ec2:ProvisionIpamPoolCidr",
         "ec2:DeprovisionIpamPoolCidr",
         "ec2:GetIpamPoolAllocations",
-        "ec2:GetIpamPoolCidrs"
+        "ec2:GetIpamPoolCidrs",
+        "ec2:AllocateIpamPoolCidr",
+        "ec2:ReleaseIpamPoolAllocation"
       ],
       "Resource": "*"
     },
@@ -91,6 +95,31 @@ Minimum permissions needed for this repo:
         "ec2:DescribeTransitGatewayAttachments",
         "ec2:AcceptTransitGatewayVpcAttachment",
         "ec2:RejectTransitGatewayVpcAttachment"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VPC",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:DescribeVpcs",
+        "ec2:ModifyVpcAttribute",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:DescribeSubnets",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:DescribeRouteTables",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:CreateTransitGatewayVpcAttachment",
+        "ec2:DeleteTransitGatewayVpcAttachment",
+        "ec2:DescribeTransitGatewayVpcAttachments",
+        "ec2:ModifyTransitGatewayVpcAttachment"
       ],
       "Resource": "*"
     },
@@ -405,8 +434,8 @@ Each would need addressing before production use.
 | No CloudTrail enforcement | API actions not auditable | Enable org-level CloudTrail |
 | `terraform-execute` trust is broad | Over-privileged if shared | Scope to specific OIDC/role, add ExternalId |
 | Account IDs in tfvars | Requires careful `.gitignore` discipline | Use SSM, Vault, or CI/CD secrets |
-| Variables over remote state | Manual copy step, error-prone | Use `terraform_remote_state` or SSM |
-| No SCPs | No guardrails on what accounts can do | Add SCPs for region restriction, IMDSv2 enforcement, etc. — see IMDSv2 section above |
+| Remote state coupling | Environments depend on network layer state being accessible | Use SSM Parameter Store for looser coupling |
+| No SCPs | No guardrails on what accounts can do | Add SCPs for region restriction, IMDSv2 enforcement, etc. — see IMDSv2 section above. Region SCPs must use `NotAction` to exclude global services (IAM, STS, RAM, Organizations) and `StringNotEquals` (not `IfExists`) — see runbook Phase 0.3 |
 | IMDSv2 not enforced by SCP | Developers can override launch template defaults at instance launch | Add SCP denying `ec2:RunInstances` unless `ec2:MetadataHttpTokens = required` — production only |
 | EBS uses AWS-managed key | No control over key rotation or access revocation | Specify CMK via `aws_ebs_default_kms_key` — production only |
 | No resource-level IAM conditions | Permissions are account-wide | Scope IAM to tagged resources or specific regions |

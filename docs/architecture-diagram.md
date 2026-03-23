@@ -19,6 +19,8 @@ AWS Organization (o-xxxxxxxxxx)
 │   │   ├── Private Scope (auto-created)
 │   │   ├── Root Pool: 10.0.0.0/8
 │   │   │   └── Regional Pool: 10.0.0.0/16 [us-west-2]
+│   │   │       ├── Network Pool: 10.0.0.0/24
+│   │   │       │   └── Allocation: 10.0.0.0/24 → network VPC
 │   │   │       ├── Dev Pool: 10.0.1.0/24
 │   │   │       │   └── Allocation: 10.0.1.0/24 → dev VPC
 │   │   │       └── Prod Pool: 10.0.2.0/24
@@ -32,11 +34,28 @@ AWS Organization (o-xxxxxxxxxx)
 │   │   ├── default_route_table_association: enable
 │   │   ├── default_route_table_propagation: enable
 │   │   ├── Default Route Table (tgw-rtb-xxxxxxxxxxxxxxxxx)
+│   │   │   ├── Propagated: 10.0.0.0/24 → network-attachment
 │   │   │   ├── Propagated: 10.0.1.0/24 → dev-attachment
 │   │   │   └── Propagated: 10.0.2.0/24 → prod-attachment
 │   │   └── RAM Resource Share (tgw-share)
 │   │       ├── Resource: tgw-arn
 │   │       └── Principal: org-arn (allow_external_principals=false)
+│   │
+│   ├── VPC: aws-transit-gw-learn-network-vpc
+│   │   ├── CIDR: 10.0.0.0/24 (allocated from IPAM network pool)
+│   │   ├── DNS hostnames: enabled
+│   │   ├── Private Subnet AZ-a: 10.0.0.0/26  (us-west-2a)
+│   │   ├── Private Subnet AZ-b: 10.0.0.64/26 (us-west-2b)
+│   │   └── Route Table: private-rt
+│   │       ├── Local: 10.0.0.0/24 → local
+│   │       └── TGW:   10.0.0.0/16 → tgw-xxxxxxxxxxxxxxxxx
+│   │
+│   ├── TGW Attachment: network-tgw-attachment
+│   │   ├── Transit Gateway: tgw-xxxxxxxxxxxxxxxxx (local)
+│   │   ├── VPC: network VPC
+│   │   ├── Subnets: [us-west-2a subnet, us-west-2b subnet]
+│   │   ├── State: available (auto-accepted)
+│   │   └── Default RT association: yes / propagation: yes
 │   │
 │   └── IAM Role: terraform-execute
 │       └── (created by tf_take2/TF_org_user)
@@ -87,6 +106,17 @@ AWS Organization (o-xxxxxxxxxx)
 ## Subnet CIDR Breakdown
 
 ```
+Network VPC: 10.0.0.0/24 (256 addresses)
+┌──────────────────────────────────────────────────────────────┐
+│ 10.0.0.0/26   (64 addr) │ Private Subnet AZ-a (us-west-2a)  │
+├──────────────────────────────────────────────────────────────┤
+│ 10.0.0.64/26  (64 addr) │ Private Subnet AZ-b (us-west-2b)  │
+├──────────────────────────────────────────────────────────────┤
+│ 10.0.0.128/26 (64 addr) │ Reserved                          │
+├──────────────────────────────────────────────────────────────┤
+│ 10.0.0.192/26 (64 addr) │ Reserved                          │
+└──────────────────────────────────────────────────────────────┘
+
 Dev VPC: 10.0.1.0/24 (256 addresses)
 ┌──────────────────────────────────────────────────────────────┐
 │ 10.0.1.0/26   (64 addr) │ Private Subnet AZ-a (us-west-2a)  │
@@ -162,16 +192,18 @@ Workstation / CI Runner
 │
 │  AWS credentials (IAM user or role with sts:AssumeRole)
 │
-├── terraform apply (environments/network)
+├── terraform apply (layers/network)
 │   └── provider "aws" { assume_role { role_arn = ".../network/.../terraform-execute" }}
-│       └── Creates: IPAM, TGW, RAM shares in network account
+│       └── Creates: IPAM, TGW, RAM shares, network VPC + TGW attachment in network account
 │
 ├── terraform apply (environments/dev)
 │   └── provider "aws" { assume_role { role_arn = ".../dev/.../terraform-execute" }}
+│   └── data "terraform_remote_state" reads layers/network outputs from S3
 │       └── Creates: VPC, subnets, TGW attachment in dev account
 │
 └── terraform apply (environments/prod)
     └── provider "aws" { assume_role { role_arn = ".../prod/.../terraform-execute" }}
+    └── data "terraform_remote_state" reads layers/network outputs from S3
         └── Creates: VPC, subnets, TGW attachment in prod account
 ```
 

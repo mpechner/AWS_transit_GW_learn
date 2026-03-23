@@ -8,8 +8,9 @@
 # Pool Hierarchy:
 #   Root Pool  (10.0.0.0/8)          — holds entire address space, no locale
 #     └─ Regional Pool (10.0.0.0/16) — scoped to aws_region
-#          ├─ Dev Pool  (10.0.1.0/24) — shared to org, for dev workloads
-#          └─ Prod Pool (10.0.2.0/24) — shared to org, for prod workloads
+#          ├─ Network Pool (10.0.0.0/24) — local to network account
+#          ├─ Dev Pool     (10.0.1.0/24) — shared to org, for dev workloads
+#          └─ Prod Pool    (10.0.2.0/24) — shared to org, for prod workloads
 #
 # Workload accounts create VPCs using the shared pool IDs. IPAM tracks and
 # enforces all allocations — overlapping CIDRs are rejected at creation time.
@@ -100,6 +101,41 @@ resource "aws_vpc_ipam_pool_cidr" "regional" {
   # The regional CIDR must be within the root pool's CIDR.
   # depends_on ensures the root CIDR is provisioned before we try to carve from it.
   depends_on = [aws_vpc_ipam_pool_cidr.root]
+}
+
+# -----------------------------------------------------------------------------
+# Network Pool
+# Child of the regional pool. Used by the network account's own VPC.
+# Not RAM-shared — IPAM lives in the same account so no cross-account
+# sharing is needed.
+#
+# allocation_min/max/default_netmask_length = 24:
+#   Enforces that the VPC gets exactly a /24 from this pool.
+# -----------------------------------------------------------------------------
+resource "aws_vpc_ipam_pool" "network" {
+  address_family      = "ipv4"
+  ipam_scope_id       = aws_vpc_ipam.main.private_default_scope_id
+  source_ipam_pool_id = aws_vpc_ipam_pool.regional.id
+  locale              = var.aws_region
+  description         = "Network account address pool"
+
+  allocation_default_netmask_length = 24
+  allocation_min_netmask_length     = 24
+  allocation_max_netmask_length     = 24
+
+  tags = {
+    Name        = "${var.project}-ipam-network-pool"
+    Project     = var.project
+    Environment = "network"
+    Tier        = "workload"
+  }
+}
+
+resource "aws_vpc_ipam_pool_cidr" "network" {
+  ipam_pool_id = aws_vpc_ipam_pool.network.id
+  cidr         = var.network_cidr
+
+  depends_on = [aws_vpc_ipam_pool_cidr.regional]
 }
 
 # -----------------------------------------------------------------------------

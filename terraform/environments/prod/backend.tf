@@ -4,10 +4,10 @@
 
 terraform {
   backend "s3" {
-    bucket         = "REPLACE_WITH_YOUR_TFSTATE_BUCKET"
+    bucket         = "mikey-com-terraformstate"
     key            = "transit-gw-learn/prod/terraform.tfstate"
-    region         = "us-west-2"
-    dynamodb_table = "terraform-locks"
-    encrypt        = true
+    region       = "us-east-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }

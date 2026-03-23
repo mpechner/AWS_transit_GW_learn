@@ -22,3 +22,8 @@ output "tgw_attachment_id" {
   description = "Dev TGW attachment ID. Verify state is 'available' in network account."
   value       = module.vpc.tgw_attachment_id
 }
+
+output "account_id" {
+  description = "Dev account ID (pass-through from variable, used by verify.sh)."
+  value       = var.dev_account_id
+}

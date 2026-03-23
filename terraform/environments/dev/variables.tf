@@ -20,25 +20,6 @@ variable "project" {
   default     = "aws-transit-gw-learn"
 }
 
-# Values from the network environment outputs.
-# Run `terraform output` in environments/network and copy these values.
-
-variable "transit_gateway_id" {
-  description = "ID of the Transit Gateway created in the network environment. From: terraform output transit_gateway_id"
-  type        = string
-}
-
-variable "dev_ipam_pool_id" {
-  description = "ID of the dev IPAM pool created in the network environment. From: terraform output dev_ipam_pool_id"
-  type        = string
-}
-
-variable "tgw_route_destination" {
-  description = "CIDR block to route through the Transit Gateway. Use the regional supernet to cover all environments."
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
 variable "availability_zones" {
   description = "List of availability zones for private subnets. Must be in var.aws_region."
   type        = list(string)

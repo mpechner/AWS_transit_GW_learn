@@ -4,23 +4,14 @@
 # Copy to terraform.tfvars and fill in values from your environment.
 # cp terraform.tfvars.example terraform.tfvars
 #
-# Values marked "from network outputs" come from:
-#   cd ../network && terraform output
+# Transit Gateway ID, IPAM pool ID, and TGW route destination are read
+# automatically from the network layer's remote state (see data.tf).
+# No manual copy needed.
 # =============================================================================
 
 aws_region     = "us-west-2"
 dev_account_id = "222222222222"   # your dev account ID
 project        = "aws-transit-gw-learn"
-
-# From: cd ../network && terraform output transit_gateway_id
-transit_gateway_id = "tgw-xxxxxxxxxxxxxxxxx"
-
-# From: cd ../network && terraform output dev_ipam_pool_id
-dev_ipam_pool_id = "ipam-pool-xxxxxxxxxxxxxxxxx"
-
-# Route all traffic for the regional supernet through the TGW.
-# This covers both dev (10.0.1.x) and prod (10.0.2.x).
-tgw_route_destination = "10.0.0.0/16"
 
 # Must be valid AZs in aws_region
 availability_zones = ["us-west-2a", "us-west-2b"]

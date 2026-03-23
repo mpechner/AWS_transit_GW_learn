@@ -21,5 +21,6 @@ project = "aws-transit-gw-learn"
 # Only change if these ranges conflict with your existing address space.
 root_cidr     = "10.0.0.0/8"
 regional_cidr = "10.0.0.0/16"
+network_cidr  = "10.0.0.0/24"
 dev_cidr      = "10.0.1.0/24"
 prod_cidr     = "10.0.2.0/24"

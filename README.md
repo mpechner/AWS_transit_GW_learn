@@ -18,7 +18,7 @@ multi-account AWS networking using:
 
 | Role | Purpose |
 |------|---------|
-| **Network / Shared-Services** | Owns IPAM and Transit Gateway. Shares both to workload accounts via RAM. |
+| **Network / Shared-Services** | Owns IPAM and Transit Gateway. Deploys a VPC from the IPAM network pool. Shares IPAM pools and TGW to workload accounts via RAM. |
 | **Dev Workload** | Deploys a VPC with CIDR allocated from the IPAM dev pool. Attaches to TGW. |
 | **Prod Workload** | Deploys a VPC with CIDR allocated from the IPAM prod pool. Attaches to TGW. |
 
@@ -35,10 +35,12 @@ multi-account AWS networking using:
 │  │   │          IPAM            │    │     Transit Gateway      │     │        │
 │  │   │  Root:     10.0.0.0/8   │    │   (org-shared via RAM)   │     │        │
 │  │   │  Regional: 10.0.0.0/16  │    │   Default Route Table    │     │        │
+│  │   │  ├ Net:  10.0.0.0/24    │    │   net  routes propagate  │     │        │
 │  │   │  ├ Dev:  10.0.1.0/24    │    │   dev  routes propagate  │     │        │
 │  │   │  └ Prod: 10.0.2.0/24    │    │   prod routes propagate  │     │        │
 │  │   └─────────────┬────────────┘    └────────────┬─────────────┘     │        │
 │  │                 │  RAM Share                   │  RAM Share         │        │
+│  │   Network VPC: 10.0.0.0/24   TGW Attachment (local)               │        │
 │  └─────────────────┼──────────────────────────────┼───────────────────┘        │
 │                    │                              │                             │
 │       ┌────────────┴────────┐         ┌───────────┴────────┐                   │
@@ -60,13 +62,13 @@ multi-account AWS networking using:
 
 ## Deployment Order
 
-Apply environments in dependency order. Each environment is independent Terraform
-state. Values flow between them via `terraform output` → `tfvars`.
+Apply in dependency order. The network layer must be deployed first; workload
+environments read its outputs via `terraform_remote_state` automatically.
 
 | Step | Directory | What it creates |
 |------|-----------|-----------------|
 | 1 | Bootstrap | Verify prerequisites; enable RAM org sharing |
-| 2 | `environments/network` | IPAM, TGW, RAM shares |
+| 2 | `layers/network` | IPAM, TGW, RAM shares, network VPC + TGW attachment |
 | 3 | `environments/dev` | Dev VPC (IPAM-allocated), TGW attachment |
 | 4 | `environments/prod` | Prod VPC (IPAM-allocated), TGW attachment |
 
@@ -78,9 +80,9 @@ See [runbook.md](runbook.md) for complete step-by-step commands.
 
 - AWS Organization with three accounts (network, dev, prod)
 - `terraform-execute` IAM role in each account (from `tf_take2/TF_org_user`)
-- S3 bucket + DynamoDB table for Terraform remote state (reuse from `tf_take2`)
+- S3 bucket for Terraform remote state (reuse from `tf_take2`; locking uses S3 native `use_lockfile`)
 - RAM organization sharing enabled (one-time setup in management account)
-- AWS IPAM organization integration enabled
+- IPAM delegated admin enabled for the network account (one-time setup in management account)
 - Terraform >= 1.5.0 and AWS CLI v2
 - Credentials with permission to assume `terraform-execute` in all three accounts
 
@@ -100,11 +102,8 @@ aws ec2 describe-transit-gateway-attachments \
 aws ec2 get-ipam-pool-allocations \
   --ipam-pool-id <dev-pool-id-from-network-outputs>
 
-# Run the included verification script
-NETWORK_ACCOUNT_ID=111111111111 \
-DEV_ACCOUNT_ID=222222222222 \
-PROD_ACCOUNT_ID=333333333333 \
-  bash scripts/verify.sh
+# Run the included verification script (auto-detects from Terraform state)
+bash scripts/verify.sh
 ```
 
 See [runbook.md](runbook.md#validation) for the complete validation checklist.
@@ -118,7 +117,7 @@ Destroy in reverse order to avoid dependency errors:
 ```bash
 cd terraform/environments/prod    && terraform destroy
 cd terraform/environments/dev     && terraform destroy
-cd terraform/environments/network && terraform destroy
+cd terraform/layers/network       && terraform destroy
 ```
 
 > **Warning**: IPAM and TGW destroy cleanly only after all attachments and
@@ -134,6 +133,7 @@ cd terraform/environments/network && terraform destroy
 | [security.md](security.md) | IAM trust model, cross-account security, hardening guide |
 | [runbook.md](runbook.md) | Step-by-step deployment, validation, and teardown |
 | [repo-structure.md](repo-structure.md) | Directory layout, module design, tf_take2 patterns |
+| [sample-output.md](sample-output.md) | Full `verify.sh` output from a successful deployment |
 | [docs/architecture-diagram.md](docs/architecture-diagram.md) | Extended architecture diagrams |
 
 ---
